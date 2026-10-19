@@ -19,29 +19,18 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
       target_account_id,
     } = request.body;
 
-    const idempotency_key = request.headers['idempotency-key'];
-
-    const connection = await fastify.pg.connect();
-
     if (source_account_id === target_account_id) {
       return reply
         .code(400)
         .send({ error: 'Source and target accounts must be different' });
     }
 
+    const idempotency_key = request.headers['idempotency-key'];
+
+    const connection = await fastify.pg.connect();
+
     try {
       await connection.query('BEGIN');
-
-      const locks = await connection.query(
-        `
-          SELECT * FROM accounts WHERE id IN ($1, $2) ORDER BY id FOR UPDATE
-        `,
-        [source_account_id, target_account_id],
-      );
-
-      if (locks.rowCount === null || locks.rowCount < 2) {
-        throw new Error("Source or target account doesn't exist");
-      }
 
       await connection.query(
         `
@@ -63,6 +52,17 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
           currency_code,
         ],
       );
+
+      const locks = await connection.query(
+        `
+          SELECT * FROM accounts WHERE id IN ($1, $2) ORDER BY id FOR UPDATE
+        `,
+        [source_account_id, target_account_id],
+      );
+
+      if (locks.rowCount !== 2) {
+        throw new Error("Source or target account doesn't exist");
+      }
 
       const debit = await connection.query(
         `
