@@ -24,11 +24,11 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
     const connection = await fastify.pg.connect();
 
     try {
-      connection.query('BEGIN');
+      await connection.query('BEGIN');
 
       // transfer logic
 
-      connection.query('COMMIT');
+      await connection.query('COMMIT');
     } catch (error) {
       await connection.query('ROLLBACK');
       throw error;

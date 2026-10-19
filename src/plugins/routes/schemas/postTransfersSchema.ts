@@ -17,8 +17,8 @@ export const postTransfersSchema = {
   headers: {
     type: 'object',
     properties: {
-      'Kdempotency-Key': { type: 'string', minLength: 1 },
+      'idempotency-key': { type: 'string', minLength: 1 },
     },
-    required: ['Idempotency-Key'],
+    required: ['idempotency-key'],
   },
 } as const;
