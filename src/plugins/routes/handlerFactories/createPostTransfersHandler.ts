@@ -26,8 +26,18 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
     try {
       await connection.query('BEGIN');
 
-      const transfer = await connection.query(
-        'INSERT INTO transfers (idempotency_key, source_account_id, target_account_id, amount_minor, currency_code) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      await connection.query(
+        `
+          INSERT INTO transfers (
+            idempotency_key,
+            source_account_id,
+            target_account_id,
+            amount_minor,
+            currency_code
+          )
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING *
+        `,
         [
           idempotency_key,
           source_account_id,
@@ -35,6 +45,15 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
           amount_minor,
           currency_code,
         ],
+      );
+
+      await connection.query(
+        `
+          UPDATE accounts
+          SET amount_minor = amount_minor - $1
+          WHERE amount_minor >= $1 AND id = $2
+        `,
+        [amount_minor, source_account_id],
       );
 
       await connection.query('COMMIT');
