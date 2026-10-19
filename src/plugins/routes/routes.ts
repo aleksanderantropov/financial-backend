@@ -3,6 +3,7 @@ import { FastifyInstance } from 'fastify';
 import { getAccountSchema } from './schemas/getAccountSchema.js';
 import { createGetAccountHandler } from './handlerFactories/createGetAccountHandler.js';
 import { postTransfersSchema } from './schemas/postTransfersSchema.js';
+import { createPostTransfersHandler } from './handlerFactories/createPostTransfersHandler.js';
 
 export function routes(_fastify: FastifyInstance) {
   const fastify = _fastify.withTypeProvider<JsonSchemaToTsProvider>();
