@@ -26,7 +26,16 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
     try {
       await connection.query('BEGIN');
 
-      // transfer logic
+      await connection.query(
+        'INSERT INTO transfers (idempotency_key, source_account_id, target_account_id, amount_minor, currency_code) VALUES ($1, $2, $3, $4, $5)',
+        [
+          idempotency_key,
+          source_account_id,
+          target_account_id,
+          amount_minor,
+          currency_code,
+        ],
+      );
 
       await connection.query('COMMIT');
     } catch (error) {
