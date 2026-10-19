@@ -47,18 +47,38 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
         ],
       );
 
-      await connection.query(
+      const debit = await connection.query(
         `
           UPDATE accounts
           SET amount_minor = amount_minor - $1
-          WHERE amount_minor >= $1 AND id = $2
+          WHERE id = $2 AND amount_minor >= $1
         `,
         [amount_minor, source_account_id],
       );
 
+      if (!debit.rowCount) {
+        throw new Error(
+          "Source account doesn't exist or has insufficient funds",
+        );
+      }
+
+      const credit = await connection.query(
+        `
+          UPDATE accounts
+          SET amount_minor = amount_minor + $1
+          WHERE id = $2
+        `,
+        [amount_minor, target_account_id],
+      );
+
+      if (!credit.rowCount) {
+        throw new Error("Target account doesn't exist");
+      }
+
       await connection.query('COMMIT');
     } catch (error) {
       await connection.query('ROLLBACK');
+
       throw error;
     } finally {
       connection.release();
