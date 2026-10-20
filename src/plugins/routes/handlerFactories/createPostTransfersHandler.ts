@@ -1,6 +1,8 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { FromSchema } from 'json-schema-to-ts';
 import { postTransfersSchema } from '../schemas/postTransfersSchema.js';
+import { DatabaseError } from 'pg';
+import { DatabaseErrorCodes } from '../../../types/DatabaseErrorCodes.js';
 
 type PostTransfersRoute = {
   Body: FromSchema<typeof postTransfersSchema.body>;
@@ -64,7 +66,7 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
         throw new Error("Source or target account doesn't exist");
       }
 
-      const debit = await connection.query(
+      const debitQuery = await connection.query(
         `
           UPDATE accounts
           SET amount_minor = amount_minor - $1
@@ -73,13 +75,13 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
         [amount_minor, source_account_id],
       );
 
-      if (!debit.rowCount) {
+      if (!debitQuery.rowCount) {
         throw new Error(
           "Source account doesn't exist or has insufficient funds",
         );
       }
 
-      const credit = await connection.query(
+      const creditQuery = await connection.query(
         `
           UPDATE accounts
           SET amount_minor = amount_minor + $1
@@ -88,13 +90,46 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
         [amount_minor, target_account_id],
       );
 
-      if (!credit.rowCount) {
+      if (!creditQuery.rowCount) {
         throw new Error("Target account doesn't exist");
       }
 
       await connection.query('COMMIT');
     } catch (error) {
       await connection.query('ROLLBACK');
+
+      if (error instanceof DatabaseError) {
+        if (
+          error.code === DatabaseErrorCodes.UNIQUE_CONSTRAINT &&
+          error.message.includes('transfers_idempotency_key')
+        ) {
+          const transferQuery = await connection.query(
+            'SELECT * FROM transfers WHERE idempotency_key = $1',
+            [idempotency_key],
+          );
+
+          if (!transferQuery.rowCount) {
+            throw error;
+          }
+
+          const [transfer] = transferQuery.rows;
+
+          if (
+            transfer.source_account_id === source_account_id &&
+            transfer.target_account_id === target_account_id &&
+            BigInt(transfer.amount_minor) === BigInt(amount_minor) &&
+            transfer.currency_code === currency_code
+          ) {
+            return reply.code(200).send({
+              transfer_id: transfer.id,
+            });
+          }
+
+          return reply.code(409).send({
+            error: 'Transfer with this idempotency_key already exists',
+          });
+        }
+      }
 
       throw error;
     } finally {
