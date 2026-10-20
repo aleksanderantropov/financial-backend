@@ -34,7 +34,7 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
     try {
       await connection.query('BEGIN');
 
-      await connection.query(
+      const transferInsert = await connection.query(
         `
           INSERT INTO transfers (
             idempotency_key,
@@ -95,13 +95,17 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
       }
 
       await connection.query('COMMIT');
+
+      return reply.code(201).send({
+        transfer_id: transferInsert.rows[0].id,
+      });
     } catch (error) {
       await connection.query('ROLLBACK');
 
       if (error instanceof DatabaseError) {
         if (
           error.code === DatabaseErrorCodes.UNIQUE_CONSTRAINT &&
-          error.message.includes('transfers_idempotency_key')
+          error.constraint === 'transfers_idempotency_key_key'
         ) {
           const transferQuery = await connection.query(
             'SELECT * FROM transfers WHERE idempotency_key = $1',
