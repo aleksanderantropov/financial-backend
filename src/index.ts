@@ -1,15 +1,10 @@
-import Fastify from 'fastify';
-import { routes } from './plugins/routes/routes.js';
-import { dbConnector } from './plugins/dbConnector.js';
+import { buildFastify } from './buildFastify.js';
 
 const DEFAULT_PORT = 3000;
 
-const fastify = Fastify({
+const fastify = buildFastify({
   logger: true,
 });
-
-fastify.register(dbConnector);
-fastify.register(routes);
 
 try {
   await fastify.listen({ port: Number(process.env.PORT ?? DEFAULT_PORT) });

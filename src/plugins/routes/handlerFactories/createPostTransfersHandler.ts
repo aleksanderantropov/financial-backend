@@ -100,7 +100,13 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
         transfer_id: transferInsert.rows[0].id,
       });
     } catch (error) {
-      await connection.query('ROLLBACK');
+      try {
+        await connection.query('ROLLBACK');
+      } catch (e) {
+        return reply
+          .code(500)
+          .send({ error: 'Database connection failed. Retry operation.' });
+      }
 
       if (error instanceof TransferError) {
         switch (error.code) {
