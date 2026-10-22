@@ -1,4 +1,4 @@
-BEGIN
+BEGIN;
 
 INSERT INTO currencies (code, name)
 VALUES

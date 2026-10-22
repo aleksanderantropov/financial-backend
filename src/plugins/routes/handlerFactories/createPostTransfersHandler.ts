@@ -57,16 +57,12 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
         ],
       );
 
-      const locks = await connection.query(
+      await connection.query(
         `
           SELECT * FROM accounts WHERE id IN ($1, $2) ORDER BY id FOR NO KEY UPDATE
         `,
         [source_account_id, target_account_id],
       );
-
-      if (locks.rowCount !== 2) {
-        throw new TransferError(TransferErrorCodes.TRANSFER_INSERT);
-      }
 
       const debitQuery = await connection.query(
         `
@@ -78,10 +74,10 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
       );
 
       if (!debitQuery.rowCount) {
-        throw new TransferError(TransferErrorCodes.UPDATE_DEBIT);
+        throw new TransferError(TransferErrorCodes.INSUFFICIENT_FUNDS);
       }
 
-      const creditQuery = await connection.query(
+      await connection.query(
         `
           UPDATE accounts
           SET amount_minor = amount_minor + $1
@@ -89,10 +85,6 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
         `,
         [amount_minor, target_account_id],
       );
-
-      if (!creditQuery.rowCount) {
-        throw new TransferError(TransferErrorCodes.UPDATE_CREDIT);
-      }
 
       await connection.query('COMMIT');
 
@@ -110,51 +102,59 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
 
       if (error instanceof TransferError) {
         switch (error.code) {
-          case TransferErrorCodes.TRANSFER_INSERT:
-            return reply
-              .code(400)
-              .send({ error: "Source or target account doesn't exist" });
-          case TransferErrorCodes.UPDATE_DEBIT:
+          case TransferErrorCodes.INSUFFICIENT_FUNDS:
             return reply.code(400).send({
-              error: "Source account doesn't exist or has insufficient funds",
+              error: 'Source account has insufficient funds',
             });
-          case TransferErrorCodes.UPDATE_CREDIT:
-            return reply
-              .code(400)
-              .send({ error: "Target account doesn't exist" });
           default:
             throw error;
         }
       } else if (error instanceof DatabaseError) {
-        if (
-          error.code === DatabaseErrorCodes.UNIQUE_CONSTRAINT &&
-          error.constraint === 'transfers_idempotency_key_key'
-        ) {
-          const transferQuery = await connection.query(
-            'SELECT * FROM transfers WHERE idempotency_key = $1',
-            [idempotency_key],
-          );
+        switch (error.code) {
+          case DatabaseErrorCodes.UNIQUE_CONSTRAINT:
+            if (error.constraint !== 'transfers_idempotency_key_key') {
+              throw error;
+            }
 
-          if (!transferQuery.rowCount) {
-            throw error;
-          }
+            const transferQuery = await connection.query(
+              'SELECT * FROM transfers WHERE idempotency_key = $1',
+              [idempotency_key],
+            );
 
-          const [transfer] = transferQuery.rows;
+            if (!transferQuery.rowCount) {
+              throw error;
+            }
 
-          if (
-            transfer.source_account_id === source_account_id &&
-            transfer.target_account_id === target_account_id &&
-            BigInt(transfer.amount_minor) === BigInt(amount_minor) &&
-            transfer.currency_code === currency_code
-          ) {
-            return reply.code(200).send({
-              transfer_id: transfer.id,
+            const [transfer] = transferQuery.rows;
+
+            if (
+              transfer.source_account_id === source_account_id &&
+              transfer.target_account_id === target_account_id &&
+              BigInt(transfer.amount_minor) === BigInt(amount_minor) &&
+              transfer.currency_code === currency_code
+            ) {
+              return reply.code(200).send({
+                transfer_id: transfer.id,
+              });
+            }
+
+            return reply.code(409).send({
+              error: 'Transfer with this idempotency_key already exists',
             });
-          }
 
-          return reply.code(409).send({
-            error: 'Transfer with this idempotency_key already exists',
-          });
+          case DatabaseErrorCodes.FOREIGN_KEY_CONSTRAINT:
+            switch (error.constraint) {
+              case 'transfers_source_account_id_currency_code_fkey':
+                return reply.code(400).send({
+                  error: `Source account doesn't exist or doesn't support ${currency_code} currency`,
+                });
+              case 'transfers_target_account_id_currency_code_fkey':
+                return reply.code(400).send({
+                  error: `Target account doesn't exist or doesn't support ${currency_code} currency`,
+                });
+            }
+
+            throw error;
         }
       }
 
