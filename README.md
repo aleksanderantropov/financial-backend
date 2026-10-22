@@ -30,7 +30,7 @@ flowchart LR
 
 ## Engineering challenges
 
-- **Concurrent transfers:** row locks serialize updates to the same accounts. Acquiring account locks in a consistent order reduces deadlock risk between opposing transfers.
+- **Concurrent transfers:** the handler requests account row locks in ID order to coordinate balance updates. Lock interactions under contention remain an area for improvement; see the current limitations below.
 - **Atomic balance changes:** the transfer record, debit, and credit share a transaction, so a failed operation rolls back the entire transfer.
 - **Retry safety:** a unique database constraint arbitrates duplicate idempotency keys, including competing requests. After rollback, the handler compares the stored transfer with the requested payload.
 - **Money representation:** balances and transfers use integer minor units in PostgreSQL `bigint` columns. The request schema currently caps each transfer at `2147483647`; PostgreSQL bigint values returned by `pg` are strings by default.
@@ -63,17 +63,9 @@ export DATABASE_URL='postgresql://localhost:5432/financial_backend'
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f src/migrations/001_initial.sql
 ```
 
-**Current seed workaround:** `002_seed_currencies.sql` and `src/seeds/development.sql` currently start with `BEGIN` without a terminating semicolon. Until those files are corrected, seed a fresh database with:
+Currency and account fixtures are defined in `src/migrations/002_seed_currencies.sql` and `src/seeds/development.sql`. Their current syntax issue is listed under [Current limitations](#current-limitations); prepare valid currency and account records before trying transfers.
 
 ```bash
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
-BEGIN;
-INSERT INTO currencies (code, name) VALUES
-  ('USD', 'US Dollar'), ('EUR', 'Euro'), ('GBP', 'British Pound');
-INSERT INTO accounts (name, amount_minor, currency_code) VALUES
-  ('A', 10000, 'USD'), ('B', 5000, 'USD');
-COMMIT;
-SQL
 npm run dev
 ```
 
@@ -87,7 +79,7 @@ npm start
 
 ### Try the API
 
-On the fresh database above, account IDs are 1 and 2:
+These examples assume two USD accounts with IDs 1 and 2, and at least 500 minor units in the source account:
 
 ```bash
 curl http://localhost:3000/accounts/1
@@ -104,6 +96,7 @@ Repeat the POST with the same key and body to retrieve the original transfer ID 
 
 - Only balance lookup and same-currency transfers are exposed. Account creation, authentication, authorization, transaction history, and currency conversion are not implemented.
 - Insufficient funds and several database failures currently surface as generic server errors. Map these to explicit domain errors and documented HTTP responses.
-- Add integration tests for competing transfers, duplicate keys, rollback, invalid currencies, and insufficient funds.
-- Correct the seed SQL, add migration automation, and provide a reproducible database setup.
+- Concurrent distinct transfers can currently return server errors under contention. Review the interaction between transfer foreign-key checks and account row locks.
+- Integration tests remain planned, with concurrent transfers and idempotent retries as priorities, followed by rollback, invalid currencies, and insufficient funds.
+- The currency and development-account seed scripts are missing a semicolon after `BEGIN` and cannot currently run as written. Migration automation and a reproducible database setup remain future work.
 - Add operational controls such as graceful shutdown, request limits, and deadlock retry handling before expanding deployment scope.
