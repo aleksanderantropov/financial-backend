@@ -59,7 +59,7 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
 
       const locks = await connection.query(
         `
-          SELECT * FROM accounts WHERE id IN ($1, $2) ORDER BY id FOR UPDATE
+          SELECT * FROM accounts WHERE id IN ($1, $2) ORDER BY id FOR NO KEY UPDATE
         `,
         [source_account_id, target_account_id],
       );
