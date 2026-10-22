@@ -129,6 +129,10 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
             [idempotency_key],
           );
 
+          if (!transferQuery.rowCount) {
+            throw error;
+          }
+
           const [transfer] = transferQuery.rows;
 
           if (
