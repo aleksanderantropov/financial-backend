@@ -3,6 +3,8 @@ import { FromSchema } from 'json-schema-to-ts';
 import { postTransfersSchema } from '../schemas/postTransfersSchema.js';
 import { DatabaseError } from 'pg';
 import { DatabaseErrorCodes } from '../../../types/DatabaseErrorCodes.js';
+import { TransferError } from '../../../types/TransferError.js';
+import { TransferErrorCodes } from '../../../types/TransferErrorCodes.js';
 
 type PostTransfersRoute = {
   Body: FromSchema<typeof postTransfersSchema.body>;
@@ -63,7 +65,7 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
       );
 
       if (locks.rowCount !== 2) {
-        throw new Error("Source or target account doesn't exist");
+        throw new TransferError(TransferErrorCodes.TRANSFER_INSERT);
       }
 
       const debitQuery = await connection.query(
@@ -76,9 +78,7 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
       );
 
       if (!debitQuery.rowCount) {
-        throw new Error(
-          "Source account doesn't exist or has insufficient funds",
-        );
+        throw new TransferError(TransferErrorCodes.UPDATE_DEBIT);
       }
 
       const creditQuery = await connection.query(
@@ -91,7 +91,7 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
       );
 
       if (!creditQuery.rowCount) {
-        throw new Error("Target account doesn't exist");
+        throw new TransferError(TransferErrorCodes.UPDATE_CREDIT);
       }
 
       await connection.query('COMMIT');
@@ -102,7 +102,24 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
     } catch (error) {
       await connection.query('ROLLBACK');
 
-      if (error instanceof DatabaseError) {
+      if (error instanceof TransferError) {
+        switch (error.code) {
+          case TransferErrorCodes.TRANSFER_INSERT:
+            return reply
+              .code(400)
+              .send({ error: "Source or target account doesn't exist" });
+          case TransferErrorCodes.UPDATE_DEBIT:
+            return reply.code(400).send({
+              error: "Source account doesn't exist or has insufficient funds",
+            });
+          case TransferErrorCodes.UPDATE_CREDIT:
+            return reply
+              .code(400)
+              .send({ error: "Target account doesn't exist" });
+          default:
+            throw error;
+        }
+      } else if (error instanceof DatabaseError) {
         if (
           error.code === DatabaseErrorCodes.UNIQUE_CONSTRAINT &&
           error.constraint === 'transfers_idempotency_key_key'
@@ -111,10 +128,6 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
             'SELECT * FROM transfers WHERE idempotency_key = $1',
             [idempotency_key],
           );
-
-          if (!transferQuery.rowCount) {
-            throw error;
-          }
 
           const [transfer] = transferQuery.rows;
 
