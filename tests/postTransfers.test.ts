@@ -308,21 +308,22 @@ describe('POST /transfers', () => {
       amount_minor: 1000,
     });
 
-    const firstResponse = await fastify.inject(
-      buildPostTransferInject({
-        idempotency_key: '1',
-        source_account_id: sourceAccount.id,
-        target_account_id: targetAccount.id,
-      }),
-    );
-
-    const secondResponse = await fastify.inject(
-      buildPostTransferInject({
-        idempotency_key: '2',
-        source_account_id: targetAccount.id,
-        target_account_id: sourceAccount.id,
-      }),
-    );
+    const [firstResponse, secondResponse] = await Promise.all([
+      fastify.inject(
+        buildPostTransferInject({
+          idempotency_key: '1',
+          source_account_id: sourceAccount.id,
+          target_account_id: targetAccount.id,
+        }),
+      ),
+      fastify.inject(
+        buildPostTransferInject({
+          idempotency_key: '2',
+          source_account_id: targetAccount.id,
+          target_account_id: sourceAccount.id,
+        }),
+      ),
+    ]);
 
     expect(firstResponse.statusCode).toBe(201);
     expect(secondResponse.statusCode).toBe(201);
