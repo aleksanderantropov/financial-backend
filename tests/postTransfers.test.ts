@@ -26,8 +26,8 @@ describe('POST /transfers', () => {
     );
   });
 
-  afterAll(() => {
-    fastify.close();
+  afterAll(async () => {
+    await fastify.close();
   });
 
   test('Sends a new transfer', async () => {
@@ -240,8 +240,11 @@ describe('POST /transfers', () => {
       ),
     ]);
 
-    expect(firstResponse.statusCode).toBe(201);
-    expect(secondResponse.statusCode).toBe(200);
+    expect(
+      [firstResponse.statusCode, secondResponse.statusCode].sort(
+        (a, b) => a - b,
+      ),
+    ).toEqual([200, 201]);
     expect(firstResponse.body).toEqual(secondResponse.body);
 
     await verifyAccountBalance({
@@ -254,6 +257,50 @@ describe('POST /transfers', () => {
       fastify,
       accountId: targetAccount.id,
       balance: 1000,
+    });
+  });
+
+  test('Two valid concurrent requests with insufficient funds result in one transfer', async () => {
+    const sourceAccount = await createTestAccount(fastify, {
+      amount_minor: 1000,
+    });
+    const targetAccount = await createTestAccount(fastify, { amount_minor: 0 });
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      fastify.inject(
+        buildPostTransferInject({
+          idempotency_key: '1',
+          source_account_id: sourceAccount.id,
+          target_account_id: targetAccount.id,
+          amount_minor: 800,
+        }),
+      ),
+      fastify.inject(
+        buildPostTransferInject({
+          idempotency_key: '2',
+          source_account_id: sourceAccount.id,
+          target_account_id: targetAccount.id,
+          amount_minor: 800,
+        }),
+      ),
+    ]);
+
+    expect(
+      [firstResponse.statusCode, secondResponse.statusCode].sort(
+        (a, b) => a - b,
+      ),
+    ).toEqual([201, 400]);
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: sourceAccount.id,
+      balance: 200,
+    });
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: targetAccount.id,
+      balance: 800,
     });
   });
 
@@ -364,6 +411,9 @@ describe('POST /transfers', () => {
     const responses = await Promise.all(transfers);
 
     expect(responses.every((res) => res.statusCode === 201)).toBe(true);
+
+    const transfersResponse = await fastify.pg.query('SELECT * FROM transfers');
+    expect(transfersResponse.rowCount).toBe(50);
 
     await verifyAccountBalance({
       fastify,
