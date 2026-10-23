@@ -10,6 +10,7 @@ import { buildFastify } from '../src/buildFastify.js';
 import { createTestAccount } from './fixtures/createTestAccount.js';
 import { buildPostTransferInject } from './utils/buildPostTransferInject.js';
 import { verifyAccountBalance } from './utils/verifyAccountBalance.js';
+import { verifyTransfersCount } from './utils/verifyTransfersCount.js';
 
 const NON_EXISTENT_ACCOUNT_ID = 999;
 
@@ -247,6 +248,8 @@ describe('POST /transfers', () => {
     ).toEqual([200, 201]);
     expect(firstResponse.body).toEqual(secondResponse.body);
 
+    await verifyTransfersCount(fastify, 1);
+
     await verifyAccountBalance({
       fastify,
       accountId: sourceAccount.id,
@@ -291,6 +294,8 @@ describe('POST /transfers', () => {
       ),
     ).toEqual([201, 400]);
 
+    await verifyTransfersCount(fastify, 1);
+
     await verifyAccountBalance({
       fastify,
       accountId: sourceAccount.id,
@@ -333,6 +338,8 @@ describe('POST /transfers', () => {
     expect((await secondResponse.json()).error).toEqual(
       'Transfer with this idempotency_key already exists',
     );
+
+    await verifyTransfersCount(fastify, 1);
 
     await verifyAccountBalance({
       fastify,
@@ -412,8 +419,7 @@ describe('POST /transfers', () => {
 
     expect(responses.every((res) => res.statusCode === 201)).toBe(true);
 
-    const transfersResponse = await fastify.pg.query('SELECT * FROM transfers');
-    expect(transfersResponse.rowCount).toBe(50);
+    await verifyTransfersCount(fastify, 50);
 
     await verifyAccountBalance({
       fastify,
@@ -451,6 +457,8 @@ describe('POST /transfers', () => {
     const responses = await Promise.all(transfers);
 
     expect(responses.every((res) => res.statusCode === 201)).toBe(true);
+
+    await verifyTransfersCount(fastify, 50);
 
     await verifyAccountBalance({
       fastify,
