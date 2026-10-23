@@ -9,6 +9,7 @@ import {
 import { buildFastify } from '../src/buildFastify.js';
 import { createTestAccount } from './fixtures/createTestAccount.js';
 import { buildPostTransferInject } from './utils/buildPostTransferInject.js';
+import { verifyAccountBalance } from './utils/verifyAccountBalance.js';
 
 const NON_EXISTENT_ACCOUNT_ID = 999;
 
@@ -30,25 +31,41 @@ describe('POST /transfers', () => {
   });
 
   test('Sends a new transfer', async () => {
-    const sourceAccount = await createTestAccount(fastify);
-    const targetAccount = await createTestAccount(fastify);
+    const sourceAccount = await createTestAccount(fastify, {
+      amount_minor: 1000,
+    });
+    const targetAccount = await createTestAccount(fastify, { amount_minor: 0 });
 
-    const response = await fastify.inject(
+    const transferResponse = await fastify.inject(
       buildPostTransferInject({
         source_account_id: sourceAccount.id,
         target_account_id: targetAccount.id,
       }),
     );
 
-    const body = response.json();
+    const body = transferResponse.json();
 
-    expect(response.statusCode).toBe(201);
+    expect(transferResponse.statusCode).toBe(201);
     expect(body).toHaveProperty('transfer_id');
     expect(Number.isInteger(body.transfer_id)).toBe(true);
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: sourceAccount.id,
+      balance: 0,
+    });
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: targetAccount.id,
+      balance: 1000,
+    });
   });
 
   test('Gets an error when source and target accounts are same', async () => {
-    const sourceAccount = await createTestAccount(fastify);
+    const sourceAccount = await createTestAccount(fastify, {
+      amount_minor: 1000,
+    });
 
     const response = await fastify.inject(
       buildPostTransferInject({
@@ -61,10 +78,16 @@ describe('POST /transfers', () => {
 
     expect(response.statusCode).toBe(400);
     expect(body.error).toBe('Source and target accounts must be different');
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: sourceAccount.id,
+      balance: 1000,
+    });
   });
 
   test("Gets an error when source account doesn't exist", async () => {
-    const targetAccount = await createTestAccount(fastify);
+    const targetAccount = await createTestAccount(fastify, { amount_minor: 0 });
 
     const response = await fastify.inject(
       buildPostTransferInject({
@@ -79,13 +102,19 @@ describe('POST /transfers', () => {
     expect(body.error).toBe(
       "Source account doesn't exist or doesn't support USD currency",
     );
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: targetAccount.id,
+      balance: 0,
+    });
   });
 
   test('Gets an error when source account has insufficient funds', async () => {
     const sourceAccount = await createTestAccount(fastify, {
       amount_minor: 1000,
     });
-    const targetAccount = await createTestAccount(fastify);
+    const targetAccount = await createTestAccount(fastify, { amount_minor: 0 });
 
     const response = await fastify.inject(
       buildPostTransferInject({
@@ -99,10 +128,24 @@ describe('POST /transfers', () => {
 
     expect(response.statusCode).toBe(400);
     expect(body.error).toBe('Source account has insufficient funds');
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: sourceAccount.id,
+      balance: 1000,
+    });
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: targetAccount.id,
+      balance: 0,
+    });
   });
 
   test("Gets an error when target account doesn't exist", async () => {
-    const sourceAccount = await createTestAccount(fastify);
+    const sourceAccount = await createTestAccount(fastify, {
+      amount_minor: 1000,
+    });
 
     const response = await fastify.inject(
       buildPostTransferInject({
@@ -117,13 +160,21 @@ describe('POST /transfers', () => {
     expect(body.error).toBe(
       "Target account doesn't exist or doesn't support USD currency",
     );
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: sourceAccount.id,
+      balance: 1000,
+    });
   });
 
   test('Gets an error when source and target account have different currencies', async () => {
     const sourceAccount = await createTestAccount(fastify, {
+      amount_minor: 1000,
       currency_code: 'USD',
     });
     const targetAccount = await createTestAccount(fastify, {
+      amount_minor: 0,
       currency_code: 'EUR',
     });
 
@@ -154,11 +205,25 @@ describe('POST /transfers', () => {
     expect((await secondResponse.json()).error).toBe(
       "Source account doesn't exist or doesn't support EUR currency",
     );
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: sourceAccount.id,
+      balance: 1000,
+    });
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: targetAccount.id,
+      balance: 0,
+    });
   });
 
   test('Two concurrent requests with same idempotency_key result in one transfer', async () => {
-    const sourceAccount = await createTestAccount(fastify);
-    const targetAccount = await createTestAccount(fastify);
+    const sourceAccount = await createTestAccount(fastify, {
+      amount_minor: 2000,
+    });
+    const targetAccount = await createTestAccount(fastify, { amount_minor: 0 });
 
     const [firstResponse, secondResponse] = await Promise.all([
       fastify.inject(
@@ -178,11 +243,25 @@ describe('POST /transfers', () => {
     expect(firstResponse.statusCode).toBe(201);
     expect(secondResponse.statusCode).toBe(200);
     expect(firstResponse.body).toEqual(secondResponse.body);
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: sourceAccount.id,
+      balance: 1000,
+    });
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: targetAccount.id,
+      balance: 1000,
+    });
   });
 
   test('Second request with same idempotency_key but different params gets an error', async () => {
-    const sourceAccount = await createTestAccount(fastify);
-    const targetAccount = await createTestAccount(fastify);
+    const sourceAccount = await createTestAccount(fastify, {
+      amount_minor: 2000,
+    });
+    const targetAccount = await createTestAccount(fastify, { amount_minor: 0 });
 
     const firstResponse = await fastify.inject(
       buildPostTransferInject({
@@ -207,11 +286,27 @@ describe('POST /transfers', () => {
     expect((await secondResponse.json()).error).toEqual(
       'Transfer with this idempotency_key already exists',
     );
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: sourceAccount.id,
+      balance: 1000,
+    });
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: targetAccount.id,
+      balance: 1000,
+    });
   });
 
   test("Two concurrent requests between the same accounts in opposite directions don't deadlock", async () => {
-    const sourceAccount = await createTestAccount(fastify);
-    const targetAccount = await createTestAccount(fastify);
+    const sourceAccount = await createTestAccount(fastify, {
+      amount_minor: 1000,
+    });
+    const targetAccount = await createTestAccount(fastify, {
+      amount_minor: 1000,
+    });
 
     const firstResponse = await fastify.inject(
       buildPostTransferInject({
@@ -231,5 +326,91 @@ describe('POST /transfers', () => {
 
     expect(firstResponse.statusCode).toBe(201);
     expect(secondResponse.statusCode).toBe(201);
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: sourceAccount.id,
+      balance: 1000,
+    });
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: targetAccount.id,
+      balance: 1000,
+    });
+  });
+
+  test('50 concurrent requests in one direction succeed', async () => {
+    const sourceAccount = await createTestAccount(fastify, {
+      amount_minor: 10000,
+    });
+
+    const targetAccount = await createTestAccount(fastify, {
+      amount_minor: 0,
+    });
+
+    const transfers = Array.from({ length: 50 }, (_, i) =>
+      fastify.inject(
+        buildPostTransferInject({
+          idempotency_key: 'concurrent-' + i,
+          source_account_id: sourceAccount.id,
+          target_account_id: targetAccount.id,
+          amount_minor: 100,
+        }),
+      ),
+    );
+
+    const responses = await Promise.all(transfers);
+
+    expect(responses.every((res) => res.statusCode === 201)).toBe(true);
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: sourceAccount.id,
+      balance: 5000,
+    });
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: targetAccount.id,
+      balance: 5000,
+    });
+  });
+
+  test('50 concurrent requests in opposite directions succeed', async () => {
+    const sourceAccount = await createTestAccount(fastify, {
+      amount_minor: 5000,
+    });
+
+    const targetAccount = await createTestAccount(fastify, {
+      amount_minor: 5000,
+    });
+
+    const transfers = Array.from({ length: 50 }, (_, i) =>
+      fastify.inject(
+        buildPostTransferInject({
+          idempotency_key: 'concurrent-' + i,
+          source_account_id: i % 2 ? sourceAccount.id : targetAccount.id,
+          target_account_id: i % 2 ? targetAccount.id : sourceAccount.id,
+          amount_minor: 100,
+        }),
+      ),
+    );
+
+    const responses = await Promise.all(transfers);
+
+    expect(responses.every((res) => res.statusCode === 201)).toBe(true);
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: sourceAccount.id,
+      balance: 5000,
+    });
+
+    await verifyAccountBalance({
+      fastify,
+      accountId: targetAccount.id,
+      balance: 5000,
+    });
   });
 });
