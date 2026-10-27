@@ -95,17 +95,17 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
         transfer_id: transferInsert.rows[0].id,
       });
     } catch (error) {
-      try {
-        await connection?.query('ROLLBACK');
-      } catch (e) {
-        request.log.error(e);
+      request.log.error(error);
 
+      if (!connection) {
         connectionBroken = true;
 
         return reply
-          .code(500)
-          .send({ error: 'Database connection failed. Retry operation.' });
+          .code(503)
+          .send({ error: 'Database temporary unavailable.' });
       }
+
+      await connection.query('ROLLBACK');
 
       if (error instanceof TransferError) {
         switch (error.code) {
