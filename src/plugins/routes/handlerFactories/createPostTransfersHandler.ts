@@ -31,9 +31,12 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
 
     const idempotency_key = request.headers['idempotency-key'];
 
-    const connection = await fastify.pg.connect();
+    let connection;
+    let connectionBroken = false;
 
     try {
+      connection = await fastify.pg.connect();
+
       await connection.query('BEGIN');
 
       const transferInsert = await connection.query(
@@ -93,8 +96,12 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
       });
     } catch (error) {
       try {
-        await connection.query('ROLLBACK');
+        await connection?.query('ROLLBACK');
       } catch (e) {
+        request.log.error(e);
+
+        connectionBroken = true;
+
         return reply
           .code(500)
           .send({ error: 'Database connection failed. Retry operation.' });
@@ -113,6 +120,10 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
         switch (error.code) {
           case DatabaseErrorCodes.UNIQUE_CONSTRAINT:
             if (error.constraint !== 'transfers_idempotency_key_key') {
+              throw error;
+            }
+
+            if (!connection) {
               throw error;
             }
 
@@ -160,7 +171,7 @@ export function createPostTransfersHandler(fastify: FastifyInstance) {
 
       throw error;
     } finally {
-      connection.release();
+      connection?.release(connectionBroken);
     }
   };
 }
